@@ -17,7 +17,7 @@ static void           convert_address(const char *address, struct sockaddr_stora
 static int            socket_create(int domain, int type, int protocol);
 static void           socket_connect(int sockfd, struct sockaddr_storage *addr, in_port_t port);
 static void           socket_close(int client_fd);
-static void           construct_login_message(uint8_t *packet, size_t *length, uint8_t packet_type);
+static void           construct_acc_message(uint8_t *packet, size_t *length, uint8_t packet_type);
 
 #define UNKNOWN_OPTION_MESSAGE_LEN 24
 #define BASE_TEN 10
@@ -33,10 +33,9 @@ static void           construct_login_message(uint8_t *packet, size_t *length, u
 
 // packet type codes
 #define ACC_LOGIN 0x0A
-#define ACC_CREATE 0x0D
+#define ACC_CREATE 0x0B
 
 // data type codes
-#define SEQUENCE 0X30
 #define UTF8_STR 0x0C
 
 int main(int argc, char *argv[])
@@ -60,7 +59,7 @@ int main(int argc, char *argv[])
     sockfd = socket_create(addr.ss_family, SOCK_STREAM, 0);
     socket_connect(sockfd, &addr, port);
 
-    construct_login_message(packet, &length, ACC_LOGIN);
+    construct_acc_message(packet, &length, ACC_LOGIN);
 
     bytes_sent = send(sockfd, packet, length, 0);
     if(bytes_sent == -1)
@@ -70,7 +69,7 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    construct_login_message(packet, &length, ACC_CREATE);
+    construct_acc_message(packet, &length, ACC_CREATE);
 
     bytes_sent = send(sockfd, packet, length, 0);
     if(bytes_sent == -1)
@@ -85,7 +84,7 @@ int main(int argc, char *argv[])
     return EXIT_SUCCESS;
 }
 
-static void construct_login_message(uint8_t *packet, size_t *length, uint8_t packet_type)
+static void construct_acc_message(uint8_t *packet, size_t *length, uint8_t packet_type)
 {
     size_t   offset = 0;
     uint16_t payload_length;
@@ -103,25 +102,25 @@ static void construct_login_message(uint8_t *packet, size_t *length, uint8_t pac
     offset += 2;
 
     // Payload Length (2 bytes) - Calculated dynamically
-    payload_length = htons(24);
+    payload_length = htons(LOGIN_LENGTH);
     memcpy(&packet[offset], &payload_length, sizeof(payload_length));
     offset += sizeof(payload_length);
-
-    // Sequence Length (2 bytes)
-    packet[offset++] = SEQUENCE;        // SEQUENCE type
-    packet[offset++] = LOGIN_LENGTH;    // length: 22
 
     // Username
     packet[offset++] = UTF8_STR;        // UTF8 String type
     packet[offset++] = USERNAME_LEN;    // length 7
-    memcpy(&packet[offset], USERNAME, sizeof(USERNAME));
-    offset += sizeof(USERNAME);
+    for(int i = 0; i < USERNAME_LEN; i++)
+    {
+        packet[offset++] = (uint8_t)USERNAME[i];
+    }
 
     // Password
     packet[offset++] = UTF8_STR;        // UTF8 String type
     packet[offset++] = PASSWORD_LEN;    // length 11
-    memcpy(&packet[offset], PASSWORD, sizeof(PASSWORD));
-    offset += sizeof(PASSWORD);
+    for(int i = 0; i < PASSWORD_LEN; i++)
+    {
+        packet[offset++] = (uint8_t)PASSWORD[i];
+    }
 
     // Final packet size
     *length = offset;
