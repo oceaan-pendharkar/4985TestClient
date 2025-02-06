@@ -18,6 +18,7 @@ static int            socket_create(int domain, int type, int protocol);
 static void           socket_connect(int sockfd, struct sockaddr_storage *addr, in_port_t port);
 static void           socket_close(int client_fd);
 static void           construct_acc_message(uint8_t *packet, size_t *length, uint8_t packet_type);
+static void           print_response(const uint8_t *response, int length);
 
 #define UNKNOWN_OPTION_MESSAGE_LEN 24
 #define BASE_TEN 10
@@ -27,11 +28,15 @@ static void           construct_acc_message(uint8_t *packet, size_t *length, uin
 // values being sent
 #define BUFFER_SIZE 1024
 #define DEFAULT_SENDER_ID 0x0000
-#define LOGIN_LENGTH 22
 #define USERNAME_LEN 0x07
 #define PASSWORD_LEN 0x0B
-#define LOGIN_SUCCESS_LEN 9
+#define LOGIN_LENGTH 22
+
+//response packet lengths
 #define LOGIN_FAILURE_LEN 45
+#define ACC_CREATE_SUCCESS_LEN 9
+#define ACC_CREATE_FAILURE_LEN 24
+#define LOGIN_SUCCESS_LEN 9
 
 // packet type codes
 #define ACC_LOGIN 0x0A
@@ -48,9 +53,10 @@ int main(int argc, char *argv[])
     int                     sockfd;
     struct sockaddr_storage addr;
     uint8_t                 packet[BUFFER_SIZE];
-    uint8_t                 response_one[BUFFER_SIZE];
-    uint8_t                 response_two[BUFFER_SIZE];
-    uint8_t                 current_byte = 0;
+    uint8_t                 login_failure[BUFFER_SIZE];
+    uint8_t                 acc_create_success[BUFFER_SIZE];
+    uint8_t                 acc_create_failure[BUFFER_SIZE];
+    uint8_t                 login_success[BUFFER_SIZE];
     size_t                  length;
     ssize_t                 bytes_sent;
     ssize_t                 bytes_received;
@@ -63,6 +69,7 @@ int main(int argc, char *argv[])
     sockfd = socket_create(addr.ss_family, SOCK_STREAM, 0);
     socket_connect(sockfd, &addr, port);
 
+    // send login request
     construct_acc_message(packet, &length, ACC_LOGIN);
 
     bytes_sent = send(sockfd, packet, length, 0);
@@ -73,7 +80,8 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    bytes_received = recv(sockfd, response_one, LOGIN_SUCCESS_LEN + 1, 0);
+    // receive login failure message
+    bytes_received = recv(sockfd, login_failure, LOGIN_FAILURE_LEN + 1, 0);
     if(bytes_received == -1)
     {
         perror("recv");
@@ -81,14 +89,9 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    printf("response: ");
-    while(current_byte < LOGIN_SUCCESS_LEN)
-    {
-        printf("%02x ", response_one[current_byte++]);
-    }
-    printf("\n");
-    current_byte = 0;
+    print_response(login_failure, LOGIN_FAILURE_LEN);
 
+    // send account create message
     construct_acc_message(packet, &length, ACC_CREATE);
 
     bytes_sent = send(sockfd, packet, length, 0);
@@ -99,7 +102,54 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    bytes_received = recv(sockfd, response_two, LOGIN_FAILURE_LEN, 0);
+    // receive account create success message
+    bytes_received = recv(sockfd, acc_create_success, ACC_CREATE_SUCCESS_LEN + 1, 0);
+    if(bytes_received == -1)
+    {
+        perror("recv");
+        close(sockfd);
+        return EXIT_FAILURE;
+    }
+    print_response(acc_create_success, ACC_CREATE_SUCCESS_LEN);
+
+    // send account create message again
+    bytes_sent = send(sockfd, packet, length, 0);
+    if(bytes_sent == -1)
+    {
+        perror("send");
+        close(sockfd);
+        return EXIT_FAILURE;
+    }
+
+    // receive account create failure message
+    //  01
+    //  01
+    //  00 00
+    //  00 12 (payload length 18)
+    //  02 01 0D (Error Code 12)
+    //  OC 13 55 73 65 72 20 41 6C 72 65 61 64 79 20 45 78 69 73 74 73 (message: User Already Exists)
+    bytes_received = recv(sockfd, acc_create_failure, ACC_CREATE_FAILURE_LEN + 1, 0);
+    if(bytes_received == -1)
+    {
+        perror("recv");
+        close(sockfd);
+        return EXIT_FAILURE;
+    }
+    print_response(acc_create_failure, ACC_CREATE_FAILURE_LEN);
+
+    // send login request
+    construct_acc_message(packet, &length, ACC_LOGIN);
+
+    bytes_sent = send(sockfd, packet, length, 0);
+    if(bytes_sent == -1)
+    {
+        perror("send");
+        close(sockfd);
+        return EXIT_FAILURE;
+    }
+
+    // receive login success message
+    bytes_received = recv(sockfd, login_success, LOGIN_SUCCESS_LEN, 0);
     if(bytes_received == -1)
     {
         perror("recv");
@@ -107,16 +157,22 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    printf("response: ");
-    while(current_byte < LOGIN_FAILURE_LEN)
-    {
-        printf("%02x ", response_two[current_byte++]);
-    }
-    printf("\n");
+    print_response(login_success, LOGIN_SUCCESS_LEN);
 
     socket_close(sockfd);
 
     return EXIT_SUCCESS;
+}
+
+static void print_response(const uint8_t *response, int length)
+{
+    int current_byte = 0;
+    printf("response: ");
+    while(current_byte < length)
+    {
+        printf("%02x ", response[current_byte++]);
+    }
+    printf("\n");
 }
 
 static void construct_acc_message(uint8_t *packet, size_t *length, uint8_t packet_type)
