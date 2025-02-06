@@ -30,6 +30,8 @@ static void           construct_acc_message(uint8_t *packet, size_t *length, uin
 #define LOGIN_LENGTH 22
 #define USERNAME_LEN 0x07
 #define PASSWORD_LEN 0x0B
+#define LOGIN_SUCCESS_LEN 9
+#define LOGIN_FAILURE_LEN 45
 
 // packet type codes
 #define ACC_LOGIN 0x0A
@@ -46,10 +48,12 @@ int main(int argc, char *argv[])
     int                     sockfd;
     struct sockaddr_storage addr;
     uint8_t                 packet[BUFFER_SIZE];
-    // todo
-    //     uint8_t                 response[BUFFER_SIZE]; // this is for when the test server sends something back
-    size_t  length;
-    ssize_t bytes_sent;
+    uint8_t                 response_one[BUFFER_SIZE];
+    uint8_t                 response_two[BUFFER_SIZE];
+    uint8_t                 current_byte = 0;
+    size_t                  length;
+    ssize_t                 bytes_sent;
+    ssize_t                 bytes_received;
 
     address  = NULL;
     port_str = NULL;
@@ -69,6 +73,22 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
+    bytes_received = recv(sockfd, response_one, LOGIN_SUCCESS_LEN + 1, 0);
+    if(bytes_received == -1)
+    {
+        perror("recv");
+        close(sockfd);
+        return EXIT_FAILURE;
+    }
+
+    printf("response: ");
+    while(current_byte < LOGIN_SUCCESS_LEN)
+    {
+        printf("%02x ", response_one[current_byte++]);
+    }
+    printf("\n");
+    current_byte = 0;
+
     construct_acc_message(packet, &length, ACC_CREATE);
 
     bytes_sent = send(sockfd, packet, length, 0);
@@ -78,6 +98,21 @@ int main(int argc, char *argv[])
         close(sockfd);
         return EXIT_FAILURE;
     }
+
+    bytes_received = recv(sockfd, response_two, LOGIN_FAILURE_LEN, 0);
+    if(bytes_received == -1)
+    {
+        perror("recv");
+        close(sockfd);
+        return EXIT_FAILURE;
+    }
+
+    printf("response: ");
+    while(current_byte < LOGIN_FAILURE_LEN)
+    {
+        printf("%02x ", response_two[current_byte++]);
+    }
+    printf("\n");
 
     socket_close(sockfd);
 
