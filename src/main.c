@@ -18,7 +18,7 @@ static int            socket_create(int domain, int type, int protocol);
 static void           socket_connect(int sockfd, struct sockaddr_storage *addr, in_port_t port);
 static void           socket_close(int client_fd);
 static void           construct_acc_message(uint8_t *packet, size_t *length, uint8_t packet_type, const char *type);
-static void           construct_cht_message(uint8_t *packet, size_t *length, const char *type);
+static void           construct_cht_message(uint8_t *packet, size_t *length, const char *type, int valid);
 static void           construct_logout_message(uint8_t *packet, size_t *length, const char *type);
 static void           print_response(const uint8_t *response, int length);
 
@@ -34,6 +34,7 @@ static void           print_response(const uint8_t *response, int length);
 // values being sent
 #define BUFFER_SIZE 1024
 #define DEFAULT_SENDER_ID 0x0001
+#define INVALID_SENDER_ID 0xFFFF
 #define USERNAME_LEN 0x07
 #define PASSWORD_LEN 0x0B
 #define LOGIN_LENGTH 22
@@ -48,6 +49,7 @@ static void           print_response(const uint8_t *response, int length);
 #define ACC_CREATE_FAILURE_LEN 24
 #define LOGIN_SUCCESS_LEN 10
 #define CHT_SEND_LEN 36
+#define CHT_FAILURE_LEN 26    // should be error code 11 if you're reading this, same length as logout failure's sys err
 #define LOGOUT_SUCCESS_LEN 9
 
 // packet type codes
@@ -74,6 +76,7 @@ int main(int argc, char *argv[])
     uint8_t                 acc_create_failure[BUFFER_SIZE];
     uint8_t                 login_success[BUFFER_SIZE];
     uint8_t                 cht_send_msg[BUFFER_SIZE];
+    uint8_t                 cht_send_sys_err[BUFFER_SIZE];
     uint8_t                 logout_success[BUFFER_SIZE];
     size_t                  length;
     ssize_t                 bytes_sent;
@@ -87,6 +90,7 @@ int main(int argc, char *argv[])
     sockfd = socket_create(addr.ss_family, SOCK_STREAM, 0);
     socket_connect(sockfd, &addr, port);
 
+    // send logout from non-logged in acct
     construct_logout_message(packet, &length, "logout");
     bytes_sent = send(sockfd, packet, length, 0);
     if(bytes_sent == -1)
@@ -207,7 +211,7 @@ int main(int argc, char *argv[])
     print_response(login_success, LOGIN_SUCCESS_LEN);
 
     // send chat message
-    construct_cht_message(packet, &length, "chat send");
+    construct_cht_message(packet, &length, "chat send", 1);
     sleep(SLEEP_LEN);
     bytes_sent = send(sockfd, packet, length, 0);
     if(bytes_sent == -1)
@@ -225,14 +229,28 @@ int main(int argc, char *argv[])
         close(sockfd);
         return EXIT_FAILURE;
     }
-    if(bytes_received == 0)
+    print_response(cht_send_msg, CHT_SEND_LEN);
+
+    // send invalid chat message
+    construct_cht_message(packet, &length, "invalid chat send", 0);
+    sleep(SLEEP_LEN);
+    bytes_sent = send(sockfd, packet, length, 0);
+    if(bytes_sent == -1)
     {
-        perror("recv: server closed or sent nothing");
+        perror("send");
         close(sockfd);
         return EXIT_FAILURE;
     }
 
-    print_response(cht_send_msg, CHT_SEND_LEN);
+    // receive sys err back
+    bytes_received = recv(sockfd, cht_send_sys_err, CHT_FAILURE_LEN + 1, 0);
+    if(bytes_received == -1)
+    {
+        perror("recv");
+        close(sockfd);
+        return EXIT_FAILURE;
+    }
+    print_response(cht_send_sys_err, CHT_FAILURE_LEN);
 
     // send logout message
     printf("\nsending logout message again...\n");
@@ -354,7 +372,7 @@ static void construct_logout_message(uint8_t *packet, size_t *length, const char
     printf("\n");
 }
 
-static void construct_cht_message(uint8_t *packet, size_t *length, const char *type)
+static void construct_cht_message(uint8_t *packet, size_t *length, const char *type, int valid)
 {
     size_t   offset = 0;
     uint16_t payload_length;
@@ -366,10 +384,19 @@ static void construct_cht_message(uint8_t *packet, size_t *length, const char *t
     // Version (1 byte)
     packet[offset++] = VERSION;    // Version: 2
 
-    // Sender ID (2 bytes) - Using htons() for network byte order
-    sender_id = htons(DEFAULT_SENDER_ID);
-    memcpy(&packet[offset], &sender_id, 2);
-    offset += 2;
+    if(valid == 1)
+    {
+        // Sender ID (2 bytes) - Using htons() for network byte order
+        sender_id = htons(DEFAULT_SENDER_ID);
+        memcpy(&packet[offset], &sender_id, 2);
+        offset += 2;
+    }
+    else
+    {
+        sender_id = htons(INVALID_SENDER_ID);
+        memcpy(&packet[offset], &sender_id, 2);
+        offset += 2;
+    }
 
     // Payload Length (2 bytes)
     payload_length = htons(CHT_PAYLOAD_LENGTH);
