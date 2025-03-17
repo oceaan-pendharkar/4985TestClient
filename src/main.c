@@ -27,7 +27,7 @@ static void           print_response(const uint8_t *response, int length);
 #define SLEEP_LEN 5
 #define USERNAME "Testing"
 #define PASSWORD "Password123"
-#define VERSION 0x02
+#define VERSION 0x03
 #define TIMESTAMP "20240301123045Z"
 #define MESSAGE "hi"
 
@@ -42,11 +42,12 @@ static void           print_response(const uint8_t *response, int length);
 #define MESSAGE_LENGTH 0x02
 
 // response packet lengths
+#define LOGOUT_FAILURE_LEN 26
 #define LOGIN_FAILURE_LEN 45
 #define ACC_CREATE_SUCCESS_LEN 9
 #define ACC_CREATE_FAILURE_LEN 24
 #define LOGIN_SUCCESS_LEN 10
-#define CHT_SEND_SUCCESS_LEN 9
+#define CHT_SEND_LEN 36
 #define LOGOUT_SUCCESS_LEN 9
 
 // packet type codes
@@ -67,11 +68,12 @@ int main(int argc, char *argv[])
     int                     sockfd;
     struct sockaddr_storage addr;
     uint8_t                 packet[BUFFER_SIZE];
+    uint8_t                 logout_sys_err[BUFFER_SIZE];
     uint8_t                 login_failure[BUFFER_SIZE];
     uint8_t                 acc_create_success[BUFFER_SIZE];
     uint8_t                 acc_create_failure[BUFFER_SIZE];
     uint8_t                 login_success[BUFFER_SIZE];
-    uint8_t                 cht_send_success[BUFFER_SIZE];
+    uint8_t                 cht_send_msg[BUFFER_SIZE];
     uint8_t                 logout_success[BUFFER_SIZE];
     size_t                  length;
     ssize_t                 bytes_sent;
@@ -85,7 +87,33 @@ int main(int argc, char *argv[])
     sockfd = socket_create(addr.ss_family, SOCK_STREAM, 0);
     socket_connect(sockfd, &addr, port);
 
+    construct_logout_message(packet, &length, "logout");
+    bytes_sent = send(sockfd, packet, length, 0);
+    if(bytes_sent == -1)
+    {
+        perror("send");
+        close(sockfd);
+        return EXIT_FAILURE;
+    }
+
+    // logout sys err with code 31 (length 26 total):
+    // packet type / version / sender ID: 01 03 00 00
+    // payload length 20: 00 14
+    // error code 31: 02 01 1F
+    // error message "Request timeout" 0C 0F 52 65 71 75 65 73 74 20 74 69 6D 65 6F 75 74
+    //  receive sys_success for logout
+    bytes_received = recv(sockfd, logout_sys_err, LOGOUT_FAILURE_LEN + 1, 0);
+    if(bytes_received == -1)
+    {
+        perror("recv");
+        close(sockfd);
+        return EXIT_FAILURE;
+    }
+
+    print_response(logout_sys_err, LOGOUT_FAILURE_LEN);
+
     // send login request
+    sleep(SLEEP_LEN);
     construct_acc_message(packet, &length, ACC_LOGIN, "login");
 
     bytes_sent = send(sockfd, packet, length, 0);
@@ -129,6 +157,8 @@ int main(int argc, char *argv[])
     print_response(acc_create_success, ACC_CREATE_SUCCESS_LEN);
 
     sleep(SLEEP_LEN);
+
+    printf("\nsending create a second time...\n");
     // send account create message again
     bytes_sent = send(sockfd, packet, length, 0);
     if(bytes_sent == -1)
@@ -166,7 +196,7 @@ int main(int argc, char *argv[])
     }
 
     // receive login success message
-    bytes_received = recv(sockfd, login_success, LOGIN_SUCCESS_LEN, 0);
+    bytes_received = recv(sockfd, login_success, LOGIN_SUCCESS_LEN + 1, 0);
     if(bytes_received == -1)
     {
         perror("recv");
@@ -187,19 +217,25 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    // receive sys_success
-    bytes_received = recv(sockfd, cht_send_success, CHT_SEND_SUCCESS_LEN, 0);
+    // receive cht msg back
+    bytes_received = recv(sockfd, cht_send_msg, CHT_SEND_LEN + 1, 0);
     if(bytes_received == -1)
     {
         perror("recv");
         close(sockfd);
         return EXIT_FAILURE;
     }
+    if(bytes_received == 0)
+    {
+        perror("recv: server closed or sent nothing");
+        close(sockfd);
+        return EXIT_FAILURE;
+    }
 
-    print_response(cht_send_success, CHT_SEND_SUCCESS_LEN);
+    print_response(cht_send_msg, CHT_SEND_LEN);
 
     // send logout message
-    construct_logout_message(packet, &length, "logout");
+    printf("\nsending logout message again...\n");
     sleep(SLEEP_LEN);
     bytes_sent = send(sockfd, packet, length, 0);
     if(bytes_sent == -1)
@@ -210,7 +246,7 @@ int main(int argc, char *argv[])
     }
 
     // receive sys_success for logout
-    bytes_received = recv(sockfd, logout_success, LOGOUT_SUCCESS_LEN, 0);
+    bytes_received = recv(sockfd, logout_success, LOGOUT_SUCCESS_LEN + 1, 0);
     if(bytes_received == -1)
     {
         perror("recv");
@@ -218,7 +254,7 @@ int main(int argc, char *argv[])
         return EXIT_FAILURE;
     }
 
-    print_response(cht_send_success, CHT_SEND_SUCCESS_LEN);
+    print_response(logout_success, LOGOUT_SUCCESS_LEN);
 
     socket_close(sockfd);
 
